@@ -10,6 +10,9 @@
 
 from builtins import object
 import numpy as np
+import odl
+
+from odl.applications.PET.backends.paraproj_setup import create_scanner_geometry, create_lor_descriptor
 
 
 
@@ -43,19 +46,9 @@ class PolygonPETGeometry(object):
         combinations are allowed. Default: None.
     symmetry_axis : int, optional
         Axis of symmetry (0, 1, or 2). Default: 2 (z-axis).
+    tof_bins : int, optional
+        Number of time of flight bins. Default: None
         
-    Examples
-    --------
-    Create a simple 5-ring PET scanner:
-    
-    >>> ring_positions = np.linspace(-10, 10, 5)
-    >>> geom = RegularPolygonPETGeometry(
-    ...     radius=65.0,
-    ...     num_sides=12,
-    ...     num_lor_endpoints_per_side=15,
-    ...     lor_spacing=2.3,
-    ...     ring_positions=ring_positions
-    ... )
     """
     
     def __init__(
@@ -68,6 +61,7 @@ class PolygonPETGeometry(object):
         radial_trim=65,
         max_ring_difference=None,
         symmetry_axis=2,
+        tof_bins=None
     ):
         self._radius = float(radius)
         self._num_sides = int(num_sides)
@@ -77,7 +71,15 @@ class PolygonPETGeometry(object):
         self._radial_trim = int(radial_trim)
         self._max_ring_difference = max_ring_difference
         self._symmetry_axis = int(symmetry_axis)
+        self._tof_bins = tof_bins
+
+        # create a scanner instance, just to be able to sample LOR start and end coords
+        # TODO: if scanner is created here, it shouldn't be recreated when defining the operator -> make use of scanner as attribute of geometry
+        # TODO: This breaks the interface with the specific backend implementation -> should be fixed
         
+        self._scanner = create_scanner_geometry(self, np, 'cpu')
+        self._lor_desc = create_lor_descriptor(self, self._scanner)
+
     @property
     def radius(self):
         """Scanner radius"""
@@ -123,6 +125,11 @@ class PolygonPETGeometry(object):
         """Number of rings."""
         return len(self.ring_positions)
     
+    @property
+    def tof_bins(self):
+        """Number of time of flight bins."""
+        return self._tof_bins
+    
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(\n"
@@ -132,7 +139,63 @@ class PolygonPETGeometry(object):
             f"    lor_spacing={self.lor_spacing},\n"
             f"    num_rings={self.num_rings},\n"
             f"    radial_trim={self.radial_trim},\n"
-            f"    max_ring_difference={self.max_ring_difference}\n"
+            f"    max_ring_difference={self.max_ring_difference},\n"
+            f"    tof_bins={self.tof_bins}\n"
             f")"
         )
+
     
+    # methods for sampling LOR start and end coords
+    # TODO: from indices to start and end coords
+
+    def sample_random_lors(self, num_lors, seed=42):
+        """
+        Sample a certain number of random LORs.
+
+        Parameters
+        ----------
+        num_lors : int
+            Number of LORs to sample.
+
+        seed : int, optional
+            Seed for the random number generator. Default: 42
+
+        Returns
+        -------
+        start_coords: array
+        end_coords: array
+        time_of_flight_bins: array, optional
+            Time of flight bins. Only returned if tof_bins is not None.
+        """
+
+        coord_space = odl.rn((num_lors, 3))
+
+        # choose random indices
+        rng = np.random.default_rng(seed)
+        random_indices = rng.choice(np.prod(self._lor_desc.spatial_sinogram_shape), num_lors, replace=False)
+
+        start_coords, end_coords = self._lor_desc.get_lor_coordinates()
+        start_coords = start_coords.reshape(-1, 3)
+        end_coords = end_coords.reshape(-1, 3)
+        start_coords, end_coords = coord_space.element(start_coords[random_indices]), coord_space.element(end_coords[random_indices])
+
+        # in the case of TOF, we need to sample the time of flight bins as well
+        if self.tof_bins is not None:
+            time_of_flight_bins = rng.choice(self.tof_bins, num_lors, replace=True)
+            return start_coords, end_coords, time_of_flight_bins
+
+        return start_coords, end_coords
+
+
+
+
+class TOFConfiguration(object):
+
+    def __init__(self):
+        pass 
+
+
+
+if __name__ == '__main__':
+    from odl.core.util.testutils import run_doctests
+    run_doctests()

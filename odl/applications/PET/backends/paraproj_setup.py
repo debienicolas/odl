@@ -10,7 +10,7 @@
 Converting ODL PET geometry to parallelproj
 """
 
-from odl.applications.PET.geometry import PolygonPETGeometry
+#from odl.applications.PET.geometry import PolygonPETGeometry
 
 try:
     import parallelproj
@@ -47,21 +47,21 @@ def get_array_module(space):
 
     if impl == 'numpy':
         try:
-            import numpy as np
+            import array_api_compat.numpy as np
             return np, device
         except ImportError:
             raise ImportError(
                 "NumPy is required for numpy implementation. ")
     elif impl == 'pytorch':
         try:
-            import torch
+            import array_api_compat.torch as torch
             return torch, device
         except ImportError:
             raise ImportError(
                 "PyTorch is required for pytorch implementation. ")
     elif impl == 'cupy':
         try:
-            import cupy as cp
+            import array_api_compat.cupy as cp
             return cp, device
         except ImportError:
             raise ImportError(
@@ -89,7 +89,11 @@ def create_scanner_geometry(odl_geometry, xp, dev):
     if not PARALLELPROJ_AVAILABLE:
         raise ImportError("parallelproj has to be installed")
     
-
+    if isinstance(xp, str):
+        import_str = f"import array_api_compat.{xp} as xp"
+        exec(import_str)
+    
+    from odl.applications.PET.geometry import PolygonPETGeometry
     if isinstance(odl_geometry, PolygonPETGeometry):
         scanner = parallelproj.RegularPolygonPETScannerGeometry(
             xp,
@@ -131,7 +135,7 @@ def create_lor_descriptor(odl_geometry, scanner):
     if not PARALLELPROJ_AVAILABLE:
         raise ImportError("parallelproj is not available")
     
-    
+    from odl.applications.PET.geometry import PolygonPETGeometry
     if isinstance(odl_geometry, PolygonPETGeometry):
         lor_desc = parallelproj.RegularPolygonPETLORDescriptor(
             scanner,
@@ -212,4 +216,33 @@ def get_sinogram_shape_from_geometry(geometry, vol_space):
     xp,dev = get_array_module(vol_space)
     scanner = create_scanner_geometry(geometry, xp, dev)
     lor_desc = create_lor_descriptor(geometry, scanner)
-    return get_sinogram_shape(lor_desc)
+
+    sinogram_shape = get_sinogram_shape(lor_desc)
+    if geometry.tof_bins is not None:
+        sinogram_shape = (*sinogram_shape, geometry.tof_bins)
+    return sinogram_shape
+
+def create_tof_parameters(geometry):
+    """Create time of flight parameters from a geometry."""
+
+    if geometry.tof_bins is None:
+        raise ValueError("Time of flight bins are not set")
+
+    return parallelproj.TOFParameters(num_tofbins=geometry.tof_bins)
+
+def create_listmode_projector(start_coords, end_coords, img_shape, voxel_size):
+
+
+    lm_proj = parallelproj.ListmodePETProjector(
+        start_coords.data,
+        end_coords.data,
+        img_shape,
+        voxel_size,
+        img_origin=None
+    )
+    
+    return lm_proj
+
+if __name__ == '__main__':
+    from odl.core.util.testutils import run_doctests
+    run_doctests()
